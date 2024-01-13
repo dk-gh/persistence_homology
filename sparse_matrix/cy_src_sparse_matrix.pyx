@@ -1,3 +1,5 @@
+# distutils: language = c++
+
 import numpy as np
 import copy
 
@@ -22,6 +24,7 @@ cdef class SyncRowsColumnsMatrix:
     cdef int j
     cdef int m
     cdef int n
+
     def __cinit__(self):
         
         self.rows = []
@@ -108,7 +111,6 @@ cdef class SyncRowsColumnsMatrix:
             for column_index in row:
                 self.columns[column_index].add(i)
 
-        self.validate_synchronisation()
 
     def __eq__(self, other):
 
@@ -207,6 +209,41 @@ cdef class SyncRowsColumnsMatrix:
                 self.rows[row].add(m)
 
         self.columns[n], self.columns[m] = self.columns[m], self.columns[n]
+
+    cdef c_add_rows_desync(self, int n, int m):
+        # cdef int column
+        cdef set row_m
+        cdef set row_n
+        # cdef set temp_col
+        row_m = self.rows[m]
+        row_n = self.rows[n]
+        # for column in row_m:
+        #     temp_col = self.columns[column]
+        #     if n in temp_col:
+        #         if m in temp_col:
+        #             temp_col.discard(n)
+        #         else:
+        #             temp_col.add(n)
+        #     else:
+        #         temp_col.add(n)
+        #     self.columns[column] = temp_col
+
+        # for column in row_n - row_m:
+        #     temp_col = self.columns[column]
+        #     if n in temp_col:
+        #         if m in temp_col:
+        #             temp_col.discard(n)
+        #         else:
+        #             temp_col.add(n)
+        #     else:
+        #         temp_col.add(n)
+        #     self.columns[column] = temp_col
+
+        self.rows[n] = row_m ^ row_n
+
+    cpdef add_rows_desync(self, int n, int m):
+        self.c_add_rows_desync(n, m)
+
 
     cdef c_add_rows(self, int n, int m):
         cdef int column
@@ -364,7 +401,19 @@ cdef class SyncRowsColumnsMatrix:
 
                     for k in cols_with_common_row:
                         self.add_columns(k, i)
-                        other.add_rows(i, k)
+                        # other.add_rows(i, k)
+                        # use the desync version of row
+                        # addition -- this does not make corresponding
+                        # column updates, and only does fast
+                        # symmetric difference operations on the rows.
+                        # Below we then bring columns into sync
+                        # with other.columns_from_rows()
+                        # this gives a roughyl x10 speedup on
+                        # on the simultaneous_reduce method
+                        other.add_rows_desync(i, k)
+            
+            other.columns_from_rows()
+
 
     def simultaneous_reduce(self, SyncRowsColumnsMatrix other):
         self.c_simultaneous_reduce(other)
